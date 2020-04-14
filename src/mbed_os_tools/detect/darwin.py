@@ -17,7 +17,7 @@ import re
 import subprocess
 import platform
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, SoupStrainer
 
 try:
     from plistlib import loads
@@ -37,14 +37,15 @@ del logging
 mbed_volume_name_match = re.compile(r"\b(mbed|SEGGER MSD|ATMEL EDBG Media)\b", re.I)
 
 
-def _plist_from_popen(popen):
+def _plist_from_popen(popen, soup_strainer=None):
     out, _ = popen.communicate()
     if not out:
         return []
     try:
         # Beautiful soup ensures the XML is properly formed after it is parsed
         # so that it can be used by other less lenient commands without problems
-        xml_representation = BeautifulSoup(out.decode('utf8'), 'xml')
+        xml_representation = BeautifulSoup(out.decode('utf8'), 'xml', parse_only=soup_strainer)
+
         if not xml_representation.get_text():
             # The output is not in the XML format
             return loads(out)
@@ -186,27 +187,28 @@ class MbedLsToolsDarwin(MbedLsToolsBase):
             cmp_par = "-c"
 
         usb_tree = []
+
+        filter_list = [
+            "USB Serial Number",
+            "idVendor",
+            "BSD Name",
+            "IORegistryEntryName",
+            "idProduct",
+            "IODialinDevice",
+        ]
+        soup_strainer = SoupStrainer(filter_list)
+
         for usb_controller in usb_controllers:
             ioreg_usb = subprocess.Popen(
                 ["ioreg", "-a", "-r", cmp_par, usb_controller, "-l"],
                 stdout=subprocess.PIPE,
             )
-            usb_tree.extend(_plist_from_popen(ioreg_usb))
+            usb_tree.extend(_plist_from_popen(ioreg_usb, soup_strainer))
 
         r = {}
 
         for name, obj in enumerate(usb_tree):
-            pruned_obj = _prune(
-                obj,
-                [
-                    "USB Serial Number",
-                    "idVendor",
-                    "BSD Name",
-                    "IORegistryEntryName",
-                    "idProduct",
-                    "IODialinDevice",
-                ],
-            )
+            pruned_obj = _prune(obj, filter_list)
             if logger.isEnabledFor(DEBUG):
                 import pprint
 
